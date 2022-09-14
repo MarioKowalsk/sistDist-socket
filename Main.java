@@ -2,34 +2,58 @@ import java.net.*;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
-import java.util.Arrays;
+import java.util.*;
 
 public class Main {
     public static void main(String args[]) {
         System.out.println("Main");
         // Peer p = new Peer(args[0]);
         // p.multiCastSend(args[1]);
-        //Collaborator collaborator = new Collaborator(args[0]);
-        Message message = new Message(12345, false, true, false, "Olá");
+        try {
+            Collaborator collaborator = new Collaborator(args[0]);
+        } catch (IOException e) { e.printStackTrace();
+        }
+        /*Message message = new Message(12345, false, true, false, "Olá");
         message.print();
         message.encode();
         message.decode(message.bytes);
-        message.print();
+        message.print();*/
+        /*try {
+            byte[] buffer = new byte[1000];
+            DatagramPacket p = new DatagramPacket(buffer, buffer.length);
+            DatagramSocket receiveSocket = new DatagramSocket(5505, InetAddress.getByName("127.0.0.1"));
+            receiveSocket.setSoTimeout(5000);
+            while (true) {
+            try {
+                receiveSocket.receive(p);
+            } catch (SocketTimeoutException ste) {
+                System.out.println("### Timed out after 5 seconds");
+            }
+            }
+        } catch (IOException e) { e.printStackTrace();
+        }*/
     }
 }
 
 class Collaborator extends Thread {
-    Peer Group;
+    Peer group;
+    ArrayList<Peer> pool = new ArrayList<Peer>();
 
-    public Collaborator(String addr) {
-        Group = new Peer(addr);
+    public Collaborator(String groupAddress) throws IOException {
+        group = new Peer(groupAddress, 6789, true);
         this.start();
     }
 
     public void run() {
-        while (true) {
-            // ListeningGroup.multiCastSend("Ola");
-            //Group.multiCastListen();
+        try {
+            group.send(new Message(6789));
+            while (true) {
+                Message message = group.receive();
+                message.print();
+                // ListeningGroup.multiCastSend("Ola");
+                //group.multiCastListen();
+            }
+        } catch (IOException e) { e.printStackTrace();
         }
     }
 }
@@ -63,12 +87,8 @@ class Message {
         body = message;
     }
 
-    public Message(byte[] payload) {
-        decode(payload);
-    }
-
     public byte[] encode() {
-        byte flags = (byte) ((isCoordenator ? 1<<0 : 0) +
+        byte flags = (byte)((isCoordenator  ? 1<<0 : 0) +
                             (isElection     ? 1<<1 : 0) +
                             (isReply        ? 1<<2 : 0));
                     
@@ -92,7 +112,8 @@ class Message {
         sourceID = buffer.getInt();
         body = new String(
             Arrays.copyOfRange(payload, buffer.position(), payload.length),
-            Charset.forName("UTF-8"));
+            Charset.forName("UTF-8")
+        );
 
         System.out.println("Buffer pos: " + buffer.position() + " Length: " + payload.length);
     }
@@ -107,40 +128,30 @@ class Message {
 }
 
 class Peer {
-    MulticastSocket socket = null;
-    NetworkInterface networkInterface;
+    DatagramSocket socket = null;
     InetSocketAddress address;
 
-    public Peer(String addr) {
-        try {
-            InetAddress group = InetAddress.getByName(addr);
-            socket = new MulticastSocket(6789);
-            address = new InetSocketAddress(group, 6789);
-            networkInterface = NetworkInterface.getByName("le0");
-            socket.joinGroup(address, networkInterface);
-        } catch (IOException e) { e.printStackTrace();
+    public Peer(String addr, int port, boolean multicast) throws IOException {
+        address = new InetSocketAddress(addr, port);
+        socket = new DatagramSocket(port); //MulticastSocket(6789);
+        if (multicast) {
+            socket.joinGroup(address, NetworkInterface.getByName("le0"));
         }
+        /*else {
+            socket.connect(address);
+        }*/
     }
 
-    public void multiCastSend(Message message) {
-        try {
-            message.encode();
-            DatagramPacket messageOut = new DatagramPacket(message.bytes, message.bytes.length, address);
-            socket.send(messageOut);
-        } catch (IOException e) { e.printStackTrace();
-        }
+    public void send(Message message) throws IOException {
+        message.encode();
+        socket.send(new DatagramPacket(message.bytes, message.bytes.length, address));
     }
 
-    public Message multiCastListen() {
+    public Message receive() throws IOException {
         Message message = new Message();
-        try {
-            //byte[] buffer = new byte[1000];
-            DatagramPacket messageIn = new DatagramPacket(message.bytes, message.bytes.length);
-            socket.receive(messageIn);
-            System.out.println("Received:" + new String(messageIn.getData()));
-            return message;
-        } catch (IOException e) { e.printStackTrace();
-        }
+        DatagramPacket messageIn = new DatagramPacket(message.bytes, message.bytes.length);
+        socket.receive(messageIn);
+        message.decode(messageIn.getData());
         return message;
     }
 }
