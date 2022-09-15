@@ -37,16 +37,20 @@ public class Main {
 
 class Collaborator extends Thread {
     Peer group;
-    ArrayList<Peer> pool = new ArrayList<Peer>();
+    Peer self;
+    int ID;
+    ArrayList<InetSocketAddress> pool = new ArrayList<InetSocketAddress>();
 
     public Collaborator(String groupAddress) throws IOException {
-        group = new Peer(groupAddress, 6789, true);
+        group = new Peer(6789, groupAddress, 6789);
+        self = new Peer();
+        ID = self.getPort();
         this.start();
     }
 
     public void run() {
         try {
-            group.send(new Message(6789));
+            group.send(new Message(ID));
             while (true) {
                 Message message = group.receive();
                 message.print();
@@ -63,6 +67,7 @@ class Coordenator {
 }
 
 class Message {
+    InetSocketAddress sourceAddress;
     int sourceID = 0;
     boolean isCoordenator = false;
     boolean isElection = false;
@@ -119,6 +124,7 @@ class Message {
     }
 
     public void print() {
+        System.out.println("sourceAddress: " + sourceAddress);
         System.out.println("isCoordenator: " + isCoordenator);
         System.out.println("isElection: " + isElection);
         System.out.println("isReply: " + isReply);
@@ -131,20 +137,27 @@ class Peer {
     DatagramSocket socket = null;
     InetSocketAddress address;
 
-    public Peer(String addr, int port, boolean multicast) throws IOException {
-        address = new InetSocketAddress(addr, port);
-        socket = new DatagramSocket(port); //MulticastSocket(6789);
-        if (multicast) {
-            socket.joinGroup(address, NetworkInterface.getByName("le0"));
-        }
-        /*else {
-            socket.connect(address);
-        }*/
+    public Peer(int listenPort, String multicastAddr, int destPort) throws IOException {
+        address = new InetSocketAddress(multicastAddr, destPort);
+        socket = new DatagramSocket(listenPort); //MulticastSocket(6789);
+        socket.joinGroup(address, NetworkInterface.getByName("le0"));
+    }
+
+    public Peer(int listenPort) throws IOException {
+        socket = new DatagramSocket(listenPort);
+    }
+
+    public Peer() throws IOException {
+        this(0);
+    }
+
+    public void send(Message message, InetSocketAddress destination) throws IOException {
+        message.encode();
+        socket.send(new DatagramPacket(message.bytes, message.bytes.length, destination));
     }
 
     public void send(Message message) throws IOException {
-        message.encode();
-        socket.send(new DatagramPacket(message.bytes, message.bytes.length, address));
+        send(message, address);
     }
 
     public Message receive() throws IOException {
@@ -152,6 +165,11 @@ class Peer {
         DatagramPacket messageIn = new DatagramPacket(message.bytes, message.bytes.length);
         socket.receive(messageIn);
         message.decode(messageIn.getData());
+        message.sourceAddress = (InetSocketAddress)messageIn.getSocketAddress();
         return message;
+    }
+
+    public int getPort() {
+        return socket.getLocalPort();
     }
 }
