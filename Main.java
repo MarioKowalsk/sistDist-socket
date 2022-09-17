@@ -3,6 +3,8 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Main {
     public static void main(String args[]) {
@@ -10,7 +12,7 @@ public class Main {
         // Peer p = new Peer(args[0]);
         // p.multiCastSend(args[1]);
         try {
-            Collaborator collaborator = new Collaborator(args[0]);
+            new Collaborator(args[0]);
         } catch (IOException e) { e.printStackTrace();
         }
         /*Message message = new Message(12345, false, true, false, "Olá");
@@ -39,13 +41,54 @@ class Collaborator extends Thread {
     Peer group;
     Peer self;
     int ID;
-    ArrayList<InetSocketAddress> pool = new ArrayList<InetSocketAddress>();
+    ConcurrentHashMap<Integer, InetSocketAddress> pool = new ConcurrentHashMap<>();
+    AtomicBoolean electionRunning = new AtomicBoolean();
 
     public Collaborator(String groupAddress) throws IOException {
         group = new Peer(6789, groupAddress, 6789);
         self = new Peer();
         ID = self.getPort();
+        new Thread(() -> listenUnicast()); //fix
         this.start();
+    }
+
+    public void election() {
+        System.out.println("Election!");
+    }
+
+    public void startElection() {
+        if (!electionRunning.getAndSet(true)) {
+            try {
+                election();
+            } finally {
+                electionRunning.set(false);
+            }
+        }
+    }
+
+    public void addPeer(Message message) throws IOException {
+        InetSocketAddress destination = new InetSocketAddress(message.sourceAddress.getAddress(), message.sourceID);
+        boolean newpeer = pool.putIfAbsent(message.sourceID, destination) == null;
+        System.out.println("newpeer: " + newpeer);
+        if (newpeer && !message.isCoordenator && !message.isElection && !message.isReply) { // todo: check if message.announcement
+            System.out.println("Greet!");
+            self.send(new Message(ID, false, true, false, ""), destination);
+        }
+    }
+
+    public void listenUnicast() {
+        System.out.println("Unicast listening!");
+        try {
+            while (true) {
+                Message message = self.receive();
+                addPeer(message);
+                message.print();
+                if (message.isElection && !message.isReply) {
+                    startElection();
+                }
+            }
+        } catch (IOException e) { e.printStackTrace();
+        }
     }
 
     public void run() {
@@ -53,9 +96,9 @@ class Collaborator extends Thread {
             group.send(new Message(ID));
             while (true) {
                 Message message = group.receive();
+                addPeer(message);
+                //timer
                 message.print();
-                // ListeningGroup.multiCastSend("Ola");
-                //group.multiCastListen();
             }
         } catch (IOException e) { e.printStackTrace();
         }
@@ -139,7 +182,9 @@ class Peer {
 
     public Peer(int listenPort, String multicastAddr, int destPort) throws IOException {
         address = new InetSocketAddress(multicastAddr, destPort);
-        socket = new DatagramSocket(listenPort); //MulticastSocket(6789);
+        socket = new DatagramSocket(null); //MulticastSocket(6789);
+        socket.setReuseAddress(true);
+        socket.bind(new InetSocketAddress(listenPort));
         socket.joinGroup(address, NetworkInterface.getByName("le0"));
     }
 
