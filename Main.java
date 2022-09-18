@@ -8,32 +8,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Main {
     public static void main(String args[]) {
-        System.out.println("Main");
-        // Peer p = new Peer(args[0]);
-        // p.multiCastSend(args[1]);
         try {
             new Collaborator(args[0]);
         } catch (IOException e) { e.printStackTrace();
         }
-        /*Message message = new Message(12345, false, true, false, "Olá");
-        message.print();
-        message.encode();
-        message.decode(message.bytes);
-        message.print();*/
-        /*try {
-            byte[] buffer = new byte[1000];
-            DatagramPacket p = new DatagramPacket(buffer, buffer.length);
-            DatagramSocket receiveSocket = new DatagramSocket(5505, InetAddress.getByName("127.0.0.1"));
-            receiveSocket.setSoTimeout(5000);
-            while (true) {
-            try {
-                receiveSocket.receive(p);
-            } catch (SocketTimeoutException ste) {
-                System.out.println("### Timed out after 5 seconds");
-            }
-            }
-        } catch (IOException e) { e.printStackTrace();
-        }*/
     }
 }
 
@@ -43,17 +21,27 @@ class Collaborator extends Thread {
     int ID;
     ConcurrentHashMap<Integer, InetSocketAddress> pool = new ConcurrentHashMap<>();
     AtomicBoolean electionRunning = new AtomicBoolean();
+    Timer timeout = new Timer();
+    ElectionTimeout electionTimeout;
+
+    class ElectionTimeout extends TimerTask {
+        public void run() {
+            startElection();
+        }
+    };
 
     public Collaborator(String groupAddress) throws IOException {
         group = new Peer(6789, groupAddress, 6789);
         self = new Peer();
         ID = self.getPort();
-        new Thread(() -> listenUnicast()); //fix
+        new Thread(() -> listenUnicast()).start();
+        scheduleElection();
         this.start();
     }
 
     public void election() {
-        System.out.println("Election!");
+        System.out.print("Election: ");
+        pool.forEach((k, v) -> {System.out.printf("[%05d]", k);});
     }
 
     public void startElection() {
@@ -66,23 +54,29 @@ class Collaborator extends Thread {
         }
     }
 
+    public void scheduleElection() {
+        if (electionTimeout != null) {
+            electionTimeout.cancel();
+        }
+        electionTimeout = new ElectionTimeout();
+        timeout.purge();
+        timeout.schedule(electionTimeout, 5000);
+    }
+
     public void addPeer(Message message) throws IOException {
         InetSocketAddress destination = new InetSocketAddress(message.sourceAddress.getAddress(), message.sourceID);
         boolean newpeer = pool.putIfAbsent(message.sourceID, destination) == null;
-        System.out.println("newpeer: " + newpeer);
-        if (newpeer && !message.isCoordenator && !message.isElection && !message.isReply) { // todo: check if message.announcement
-            System.out.println("Greet!");
+        if (newpeer && message.sourceID != ID && !message.isCoordenator && !message.isElection && !message.isReply) { // todo: check if message.announcement instead
             self.send(new Message(ID, false, true, false, ""), destination);
         }
     }
 
     public void listenUnicast() {
-        System.out.println("Unicast listening!");
         try {
             while (true) {
                 Message message = self.receive();
                 addPeer(message);
-                message.print();
+                //message.print("<-");
                 if (message.isElection && !message.isReply) {
                     startElection();
                 }
@@ -97,8 +91,11 @@ class Collaborator extends Thread {
             while (true) {
                 Message message = group.receive();
                 addPeer(message);
+                if (message.isCoordenator) {
+                    scheduleElection();
+                }
                 //timer
-                message.print();
+                //message.print("<-");
             }
         } catch (IOException e) { e.printStackTrace();
         }
@@ -140,8 +137,6 @@ class Message {
                             (isElection     ? 1<<1 : 0) +
                             (isReply        ? 1<<2 : 0));
                     
-        System.out.println("Flags: " + flags);
-        
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         buffer.put(flags)
               .putInt(sourceID)
@@ -162,17 +157,16 @@ class Message {
             Arrays.copyOfRange(payload, buffer.position(), payload.length),
             Charset.forName("UTF-8")
         );
-
-        System.out.println("Buffer pos: " + buffer.position() + " Length: " + payload.length);
     }
 
-    public void print() {
-        System.out.println("sourceAddress: " + sourceAddress);
-        System.out.println("isCoordenator: " + isCoordenator);
-        System.out.println("isElection: " + isElection);
-        System.out.println("isReply: " + isReply);
-        System.out.println("sourceID: " + sourceID);
-        System.out.println("body: " + body);
+    public void print(String direction) {
+        System.out.printf("%s [%05d][%s%s%s] %s\n", //%-21s sourceAddress,
+        direction,
+        sourceID,
+        isCoordenator ? "Coordenator" : "           ",
+        isElection ? "Election" : "        ",
+        isReply ? "Reply" : "     ",
+        body);
     }
 }
 
@@ -198,6 +192,7 @@ class Peer {
 
     public void send(Message message, InetSocketAddress destination) throws IOException {
         message.encode();
+        message.print("->");
         socket.send(new DatagramPacket(message.bytes, message.bytes.length, destination));
     }
 
@@ -211,6 +206,7 @@ class Peer {
         socket.receive(messageIn);
         message.decode(messageIn.getData());
         message.sourceAddress = (InetSocketAddress)messageIn.getSocketAddress();
+        message.print("<-");
         return message;
     }
 
