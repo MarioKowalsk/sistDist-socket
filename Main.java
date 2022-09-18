@@ -21,12 +21,25 @@ class Collaborator extends Thread {
     int ID;
     ConcurrentHashMap<Integer, InetSocketAddress> pool = new ConcurrentHashMap<>();
     AtomicBoolean electionRunning = new AtomicBoolean();
+    Coordenator coordenator;
     Timer timeout = new Timer();
-    ElectionTimeout electionTimeout;
+    TimerTask electionTimeout;
+    TimerTask coordenatorTimeout;
 
     class ElectionTimeout extends TimerTask {
         public void run() {
-            startElection();
+            try {
+                startElection();
+            } catch (IOException e) {e.printStackTrace();
+            }
+        }
+    };
+
+    class CoordenatorTimeout extends TimerTask {
+        public void run() {
+            System.out.println("Coordenator!");
+            coordenator = new Coordenator(ID, group);
+            coordenator.start();
         }
     };
 
@@ -35,32 +48,47 @@ class Collaborator extends Thread {
         self = new Peer();
         ID = self.getPort();
         new Thread(() -> listenUnicast()).start();
-        scheduleElection();
+        electionTimer();
         this.start();
     }
 
-    public void election() {
-        System.out.print("Election: ");
-        pool.forEach((k, v) -> {System.out.printf("[%05d]", k);});
+    public TimerTask rescheduleTask(TimerTask old, TimerTask newTask, long delay) {
+        if (old != null) {
+            old.cancel();
+        }
+        timeout.purge();
+        timeout.schedule(newTask, delay);
+        return newTask;
     }
 
-    public void startElection() {
+    public void coordenatorTimer() {
+        coordenatorTimeout = rescheduleTask(coordenatorTimeout, new CoordenatorTimeout(), 5000);
+    }
+
+    public void electionTimer() {
+        electionTimeout = rescheduleTask(electionTimeout, new ElectionTimeout(), 2500);
+    }
+
+    public void election() throws IOException {
+        String output = "Election: ";
+        for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
+            if (entry.getKey() > ID) {
+                output += String.format("[%05d]", entry.getKey());
+                self.send(new Message(ID, true, false, false, ""), entry.getValue());
+            }
+        };
+        System.out.println(output);
+        coordenatorTimer();
+    }
+
+    public void startElection() throws IOException {
         if (!electionRunning.getAndSet(true)) {
             try {
                 election();
             } finally {
-                electionRunning.set(false);
+                electionRunning.set(false); // move to a timer
             }
         }
-    }
-
-    public void scheduleElection() {
-        if (electionTimeout != null) {
-            electionTimeout.cancel();
-        }
-        electionTimeout = new ElectionTimeout();
-        timeout.purge();
-        timeout.schedule(electionTimeout, 5000);
     }
 
     public void addPeer(Message message) throws IOException {
@@ -76,9 +104,15 @@ class Collaborator extends Thread {
             while (true) {
                 Message message = self.receive();
                 addPeer(message);
-                //message.print("<-");
-                if (message.isElection && !message.isReply) {
-                    startElection();
+                if (message.isElection) {
+                    if (message.isReply) {
+                        if (message.sourceID > ID && coordenatorTimeout != null) {
+                            coordenatorTimeout.cancel();
+                        }
+                    } else {
+                        self.send(new Message(ID, true, true, false, ""), message.sourceAddress);
+                        startElection();
+                    }
                 }
             }
         } catch (IOException e) { e.printStackTrace();
@@ -92,18 +126,33 @@ class Collaborator extends Thread {
                 Message message = group.receive();
                 addPeer(message);
                 if (message.isCoordenator) {
-                    scheduleElection();
+                    electionTimer();
                 }
-                //timer
-                //message.print("<-");
             }
         } catch (IOException e) { e.printStackTrace();
         }
     }
 }
 
-class Coordenator {
+class Coordenator extends Thread {
+    Peer group;
+    int ID;
+    volatile boolean running = true;
 
+    public Coordenator(int id, Peer multicast) {
+        group = multicast;
+        ID = id;
+    }
+
+    public void run() {
+        try {
+            while (running) {
+                group.send(new Message(ID, false, false, true, "Olá"));
+                sleep(1000);
+            }
+        } catch (Exception e) { e.printStackTrace();
+        }
+    }
 }
 
 class Message {
