@@ -16,15 +16,28 @@ public class Main {
 }
 
 class Collaborator extends Thread {
+    static final int TIMEOUT_DT1 = 4000;
+    static final int TIMEOUT_DT2 = 6000;
+    static final int TIMEOUT_DT3 = 8000;
     Peer group;
-    Peer self;
-    int ID;
+    Peer self = new Peer();
+    int ID = 0;
+    int coordenador_eleito = 0;
     ConcurrentHashMap<Integer, InetSocketAddress> pool = new ConcurrentHashMap<>();
     AtomicBoolean electionRunning = new AtomicBoolean();
+    AtomicBoolean coordenatorEligible = new AtomicBoolean();
     Coordenator coordenator;
     Timer timeout = new Timer();
-    TimerTask electionTimeout;
-    TimerTask coordenatorTimeout;
+    TimerTask electionTimeout = new ElectionTimeout();
+    TimerTask electionDoneTimeout = new ElectionDoneTimeout();
+
+    public Collaborator(String groupAddress) throws IOException {
+        group = new Peer(6789, groupAddress, 6789);
+        ID = self.getPort();
+        new Thread(() -> listenUnicast()).start();
+        electionTimer(0);
+        this.start();
+    }
 
     class ElectionTimeout extends TimerTask {
         public void run() {
@@ -35,41 +48,29 @@ class Collaborator extends Thread {
         }
     };
 
-    class CoordenatorTimeout extends TimerTask {
+    class ElectionDoneTimeout extends TimerTask {
         public void run() {
-            System.out.println("Coordenator!");
-            coordenator = new Coordenator(ID, group);
-            coordenator.start();
+            stopElection();
         }
     };
 
-    public Collaborator(String groupAddress) throws IOException {
-        group = new Peer(6789, groupAddress, 6789);
-        self = new Peer();
-        ID = self.getPort();
-        new Thread(() -> listenUnicast()).start();
-        electionTimer();
-        this.start();
-    }
-
     public TimerTask rescheduleTask(TimerTask old, TimerTask newTask, long delay) {
-        if (old != null) {
-            old.cancel();
-        }
+        old.cancel();
         timeout.purge();
         timeout.schedule(newTask, delay);
         return newTask;
     }
 
-    public void coordenatorTimer() {
-        coordenatorTimeout = rescheduleTask(coordenatorTimeout, new CoordenatorTimeout(), 5000);
+    public void electionDoneTimer(long delay) {
+        electionDoneTimeout = rescheduleTask(electionDoneTimeout, new ElectionDoneTimeout(), delay <= 0 ? TIMEOUT_DT2 : delay);
     }
 
-    public void electionTimer() {
-        electionTimeout = rescheduleTask(electionTimeout, new ElectionTimeout(), 2500);
+    public void electionTimer(long delay) {
+        electionTimeout = rescheduleTask(electionTimeout, new ElectionTimeout(), delay <= 0 ? TIMEOUT_DT1 : delay);
     }
 
     public void election() throws IOException {
+        coordenatorEligible.set(true);
         String output = "Election: ";
         for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
             if (entry.getKey() > ID) {
@@ -78,23 +79,32 @@ class Collaborator extends Thread {
             }
         };
         System.out.println(output);
-        coordenatorTimer();
+        electionDoneTimer(0);
     }
 
     public void startElection() throws IOException {
         if (!electionRunning.getAndSet(true)) {
-            try {
-                election();
-            } finally {
-                electionRunning.set(false); // move to a timer
+            election();
+        }
+    }
+
+    public void stopElection() {
+        electionDoneTimeout.cancel();
+        electionRunning.set(false);
+        if (coordenatorEligible.getAndSet(false)) {
+            System.out.println("Coordenator!");
+            if (coordenator != null) {
+                coordenator.stopCoordenator();
             }
+            coordenator = new Coordenator(ID, group);
+            coordenator.start();
         }
     }
 
     public void addPeer(Message message) throws IOException {
         InetSocketAddress destination = new InetSocketAddress(message.sourceAddress.getAddress(), message.sourceID);
         boolean newpeer = pool.putIfAbsent(message.sourceID, destination) == null;
-        if (newpeer && message.sourceID != ID && !message.isCoordenator && !message.isElection && !message.isReply) { // todo: check if message.announcement instead
+        if (newpeer && message.sourceID != ID && !message.isCoordenator && !message.isElection && !message.isReply) {
             self.send(new Message(ID, false, true, false, ""), destination);
         }
     }
@@ -106,8 +116,9 @@ class Collaborator extends Thread {
                 addPeer(message);
                 if (message.isElection) {
                     if (message.isReply) {
-                        if (message.sourceID > ID && coordenatorTimeout != null) {
-                            coordenatorTimeout.cancel();
+                        if (message.sourceID > ID) {
+                            coordenatorEligible.set(false);
+                            electionTimer(TIMEOUT_DT3);
                         }
                     } else {
                         self.send(new Message(ID, true, true, false, ""), message.sourceAddress);
@@ -125,8 +136,16 @@ class Collaborator extends Thread {
             while (true) {
                 Message message = group.receive();
                 addPeer(message);
-                if (message.isCoordenator) {
-                    electionTimer();
+                if (message.sourceID != coordenador_eleito && message.isCoordenator) {
+                    coordenatorEligible.set(false);
+                    stopElection();
+                    coordenador_eleito = message.sourceID;
+                    if (coordenator != null && coordenador_eleito != ID) {
+                        coordenator.stopCoordenator();
+                    }
+                }
+                if (message.sourceID == coordenador_eleito) {
+                    electionTimer(0);
                 }
             }
         } catch (IOException e) { e.printStackTrace();
@@ -135,6 +154,7 @@ class Collaborator extends Thread {
 }
 
 class Coordenator extends Thread {
+    static final int TIMEOUT_DT1 = 2000;
     Peer group;
     int ID;
     volatile boolean running = true;
@@ -146,12 +166,17 @@ class Coordenator extends Thread {
 
     public void run() {
         try {
+            //group.send(new Message(ID, false, false, true, ""));
             while (running) {
                 group.send(new Message(ID, false, false, true, "Olá"));
-                sleep(1000);
+                sleep(TIMEOUT_DT1);
             }
         } catch (Exception e) { e.printStackTrace();
         }
+    }
+
+    public void stopCoordenator() {
+        running = false;
     }
 }
 
