@@ -54,7 +54,7 @@ class Asker extends Thread {
         if (!enabled.get()) {
             return Results.BUSY;
         }
-        System.out.print("Start election or become coordenator? [Yes/no/coordenator/y/n/c]: ");
+        System.out.println("Start election or become coordenator? [Yes/no/coordenator/y/n/c]: ");
         if (!asking.getAndSet(true)) {
             try {
                 mutex.acquire();
@@ -88,6 +88,9 @@ class Collaborator extends Thread {
     public Collaborator(String groupAddress) throws IOException {
         group = new Peer(6789, groupAddress, 6789);
         ID = self.getPort();
+        String prefix = String.format("ID: %5d", ID);
+        self.printPrefix = prefix;
+        group.printPrefix = prefix;
         new Thread(() -> listenUnicast()).start();
         electionTimer(0);
         this.start();
@@ -128,7 +131,7 @@ class Collaborator extends Thread {
         String output = "Election: {";
         for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
             if (entry.getKey() > ID) {
-                output += String.format("[%05d]", entry.getKey());
+                output += String.format("[%5d]", entry.getKey());
                 self.send(new Message(ID, true, false, false, ""), entry.getValue());
             }
         };
@@ -301,10 +304,9 @@ class Message {
         );
     }
 
-    public void print(String direction) {
-        System.out.printf("%s [%05d][%s%s%s] %s\n", //%-21s sourceAddress,
-        direction,
-        sourceID,
+    public void print(String prefix) {
+        System.out.printf("%s [%s%s%s] %s\n",
+        prefix,
         isCoordenator ? "Coordenator" : "           ",
         isElection ? "Election" : "        ",
         isReply ? "Reply" : "     ",
@@ -315,6 +317,7 @@ class Message {
 class Peer {
     DatagramSocket socket = null;
     InetSocketAddress address;
+    String printPrefix = "";
 
     public Peer(int listenPort, String multicastAddr, int destPort) throws IOException {
         address = new InetSocketAddress(multicastAddr, destPort);
@@ -334,7 +337,7 @@ class Peer {
 
     public void send(Message message, InetSocketAddress destination) throws IOException {
         message.encode();
-        message.print("->");
+        message.print(String.format("%s -> %5d", printPrefix, destination.getPort()));
         socket.send(new DatagramPacket(message.bytes, message.bytes.length, destination));
     }
 
@@ -348,7 +351,7 @@ class Peer {
         socket.receive(messageIn);
         message.decode(messageIn.getData());
         message.sourceAddress = (InetSocketAddress)messageIn.getSocketAddress();
-        message.print("<-");
+        message.print(String.format("%s <- %5d", printPrefix, message.sourceID));
         return message;
     }
 
