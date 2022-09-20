@@ -3,7 +3,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Main {
@@ -18,28 +18,39 @@ public class Main {
 class Asker extends Thread {
     AtomicBoolean enabled = new AtomicBoolean(true);
     AtomicBoolean asking = new AtomicBoolean(false);
+    Semaphore mutex = new Semaphore(0);
     String result;
 
-    public Asker() {}
+    public Asker() {
+        this.start();
+    }
 
     public void run() {
         while (true) {
             Scanner sc = new Scanner(System.in);
             result = sc.next();
             System.out.println(result);
-            //semaphore
+            mutex.release();
         }
     }
 
     public void setEnabled(boolean value) {
-        //semaphore
+        if (!value) {
+            mutex.release();
+        }
         enabled.set(value);
     }
 
     public void ask() {
-        if (enabled.get() && !asking.getAndSet(true)) {
-            System.out.println("Start election? ");
-            //semaphore
+        if (!enabled.get()) {
+            return;
+        }
+        System.out.println("Start election? ");
+        if (!asking.getAndSet(true)) {
+            try {
+                mutex.acquire();
+            } catch (InterruptedException e) { e.printStackTrace();
+            }
             asking.set(false);
         }
     }
@@ -103,14 +114,14 @@ class Collaborator extends Thread {
 
     public void election() throws IOException {
         coordenatorEligible.set(true);
-        String output = "Election: ";
+        String output = "Election: {";
         for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
             if (entry.getKey() > ID) {
                 output += String.format("[%05d]", entry.getKey());
                 self.send(new Message(ID, true, false, false, ""), entry.getValue());
             }
         };
-        System.out.println(output);
+        System.out.println(output + "}");
         electionDoneTimer(0);
     }
 
@@ -148,10 +159,10 @@ class Collaborator extends Thread {
                 Message message = self.receive();
                 addPeer(message);
                 if (message.isElection) {
+                    asker.setEnabled(false);
                     if (message.isReply) {
                         if (message.sourceID > ID) {
                             coordenatorEligible.set(false);
-                            asker.setEnabled(false);
                             electionTimer(TIMEOUT_DT3);
                         }
                     } else {
