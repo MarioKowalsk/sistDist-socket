@@ -1,0 +1,58 @@
+{
+	// See https://go.microsoft.com/fwlink/?LinkId=733558
+	// for the documentation about the tasks.json format
+	"version": "2.0.0",
+	"presentation": {
+		"reveal": "always",
+		"echo": true,
+		"focus": false,
+		"panel": "dedicated",
+		"showReuseMessage": true,
+		"group": "test",
+		"clear": true
+	},
+	"tasks": [
+		{
+			"label": "All processes",
+			"dependsOn": [
+				"Process 1",
+				"Process 2",
+				"Process 3",
+				"Process 4"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Process 1",
+			"type": "shell",
+			"command": "make run",
+			"group": "test",
+			"isBackground": true
+		},
+		{
+			"label": "Process 2",
+			"type": "shell",
+			"command": "make run",
+			"group": "test",
+			"isBackground": true
+		},
+		{
+			"label": "Process 3",
+			"type": "shell",
+			"command": "make run",
+			"group": "test",
+			"isBackground": true
+		},
+		{
+			"label": "Process 4",
+			"type": "shell",
+			"command": "make run",
+			"group": "test",
+			"isBackground": true
+		}
+	]
+}
