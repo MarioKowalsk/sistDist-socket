@@ -19,7 +19,11 @@ class Asker extends Thread {
     AtomicBoolean enabled = new AtomicBoolean(true);
     AtomicBoolean asking = new AtomicBoolean(false);
     Semaphore mutex = new Semaphore(0);
-    String result;
+    Results result;
+
+    enum Results {
+        BUSY, YES, NO, COORDENATOR
+    }
 
     public Asker() {
         this.start();
@@ -28,8 +32,11 @@ class Asker extends Thread {
     public void run() {
         while (true) {
             Scanner sc = new Scanner(System.in);
-            result = sc.next();
-            System.out.println(result);
+            String in = sc.next().toLowerCase();
+            result = in.matches(".*c.*") ? Results.COORDENATOR :
+                     in.matches(".*y.*") ? Results.YES :
+                     in.matches(".*n.*") ? Results.NO  :
+                     Results.BUSY;
             mutex.release();
         }
     }
@@ -41,11 +48,11 @@ class Asker extends Thread {
         enabled.set(value);
     }
 
-    public void ask() {
+    public Asker.Results ask() {
         if (!enabled.get()) {
-            return;
+            return Results.BUSY;
         }
-        System.out.println("Start election? ");
+        System.out.print("Start election or become coordenator? [Yes/no/coordenator/y/n/c]: ");
         if (!asking.getAndSet(true)) {
             try {
                 mutex.acquire();
@@ -53,6 +60,7 @@ class Asker extends Thread {
             }
             asking.set(false);
         }
+        return result;
     }
 }
 
@@ -126,7 +134,13 @@ class Collaborator extends Thread {
     }
 
     public void startElection() throws IOException {
-        asker.ask();
+        Asker.Results result = asker.ask();
+        if (result == Asker.Results.NO) {
+            return;
+        } else if (result == Asker.Results.COORDENATOR) {
+            startCoordenator();
+            return;
+        }
         if (!electionRunning.getAndSet(true)) {
             election();
         }
@@ -136,13 +150,17 @@ class Collaborator extends Thread {
         electionDoneTimeout.cancel();
         electionRunning.set(false);
         if (coordenatorEligible.getAndSet(false)) {
-            System.out.println("Coordenator!");
-            if (coordenator != null) {
-                coordenator.stopCoordenator();
-            }
-            coordenator = new Coordenator(ID, group);
-            coordenator.start();
+            startCoordenator();
         }
+    }
+
+    public void startCoordenator() {
+        System.out.println("Coordenator!");
+        if (coordenator != null) {
+            coordenator.stopCoordenator();
+        }
+        coordenator = new Coordenator(ID, group);
+        coordenator.start();
     }
 
     public void addPeer(Message message) throws IOException {
@@ -183,6 +201,7 @@ class Collaborator extends Thread {
                 addPeer(message);
                 if (message.sourceID != coordenador_eleito && message.isCoordenator) {
                     coordenatorEligible.set(false);
+                    asker.setEnabled(false);
                     stopElection();
                     coordenador_eleito = message.sourceID;
                     if (coordenator != null && coordenador_eleito != ID) {
