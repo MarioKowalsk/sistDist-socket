@@ -37,12 +37,14 @@ class Asker extends Thread {
                      in.matches(".*y.*") ? Results.YES :
                      in.matches(".*n.*") ? Results.NO  :
                      Results.BUSY;
-            mutex.release();
+            if (asking.get()) {
+                mutex.release();
+            }
         }
     }
 
     public void setEnabled(boolean value) {
-        if (!value) {
+        if (!value && asking.get()) {
             mutex.release();
         }
         enabled.set(value);
@@ -58,6 +60,7 @@ class Asker extends Thread {
                 mutex.acquire();
             } catch (InterruptedException e) { e.printStackTrace();
             }
+            mutex.drainPermits();
             asking.set(false);
         }
         return result;
