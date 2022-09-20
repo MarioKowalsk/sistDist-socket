@@ -15,6 +15,36 @@ public class Main {
     }
 }
 
+class Asker extends Thread {
+    AtomicBoolean enabled = new AtomicBoolean(true);
+    AtomicBoolean asking = new AtomicBoolean(false);
+    String result;
+
+    public Asker() {}
+
+    public void run() {
+        while (true) {
+            Scanner sc = new Scanner(System.in);
+            result = sc.next();
+            System.out.println(result);
+            //semaphore
+        }
+    }
+
+    public void setEnabled(boolean value) {
+        //semaphore
+        enabled.set(value);
+    }
+
+    public void ask() {
+        if (enabled.get() && !asking.getAndSet(true)) {
+            System.out.println("Start election? ");
+            //semaphore
+            asking.set(false);
+        }
+    }
+}
+
 class Collaborator extends Thread {
     static final int TIMEOUT_DT1 = 4000;
     static final int TIMEOUT_DT2 = 6000;
@@ -30,6 +60,8 @@ class Collaborator extends Thread {
     Timer timeout = new Timer();
     TimerTask electionTimeout = new ElectionTimeout();
     TimerTask electionDoneTimeout = new ElectionDoneTimeout();
+
+    Asker asker = new Asker();
 
     public Collaborator(String groupAddress) throws IOException {
         group = new Peer(6789, groupAddress, 6789);
@@ -83,6 +115,7 @@ class Collaborator extends Thread {
     }
 
     public void startElection() throws IOException {
+        asker.ask();
         if (!electionRunning.getAndSet(true)) {
             election();
         }
@@ -118,6 +151,7 @@ class Collaborator extends Thread {
                     if (message.isReply) {
                         if (message.sourceID > ID) {
                             coordenatorEligible.set(false);
+                            asker.setEnabled(false);
                             electionTimer(TIMEOUT_DT3);
                         }
                     } else {
@@ -145,6 +179,7 @@ class Collaborator extends Thread {
                     }
                 }
                 if (message.sourceID == coordenador_eleito) {
+                    asker.setEnabled(true);
                     electionTimer(0);
                 }
             }
@@ -166,7 +201,7 @@ class Coordenator extends Thread {
 
     public void run() {
         try {
-            //group.send(new Message(ID, false, false, true, ""));
+            group.send(new Message(ID, false, false, true, ""));
             while (running) {
                 group.send(new Message(ID, false, false, true, "Olá"));
                 sleep(TIMEOUT_DT1);
