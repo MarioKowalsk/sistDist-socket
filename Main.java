@@ -230,7 +230,6 @@ class Collaborator extends Thread {
                 addPeer(message);
                 if (message.sourceID != coordenador_eleito && message.isCoordenator) {
                     coordenatorEligible.set(false);
-                    electionTimeout.cancel();
                     asker.setEnabled(false);
                     stopElection();
                     coordenador_eleito = message.sourceID;
@@ -240,6 +239,7 @@ class Collaborator extends Thread {
                 }
                 if (message.sourceID == coordenador_eleito) {
                     asker.setEnabled(true);
+                    electionTimeout.cancel();
                     coordenatorTimer(0);
                 }
             }
