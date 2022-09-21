@@ -38,7 +38,7 @@ class Asker extends Thread {
 
     public void setEnabled(boolean value) {
         if (!value && asking.get()) {
-            result = true;
+            result = false;
             mutex.release();
         }
         enabled.set(value);
@@ -76,6 +76,7 @@ class Collaborator extends Thread {
     AtomicBoolean coordenatorEligible = new AtomicBoolean();
     Coordenator coordenator;
     Timer timeout = new Timer();
+    TimerTask coordenatorTimeout = new CoordenatorTimeout();
     TimerTask electionTimeout = new ElectionTimeout();
     TimerTask electionDoneTimeout = new ElectionDoneTimeout();
 
@@ -89,14 +90,23 @@ class Collaborator extends Thread {
         self.printPrefix = prefix;
         group.printPrefix = prefix;
         new Thread(() -> listenUnicast()).start();
-        electionTimer(0);
+        coordenatorTimer(0);
         this.start();
     }
+
+    class CoordenatorTimeout extends TimerTask {
+        public void run() {
+            try {
+                startElection();
+            } catch (IOException e) {e.printStackTrace();
+            }
+        }
+    };
 
     class ElectionTimeout extends TimerTask {
         public void run() {
             try {
-                startElection();
+                election();
             } catch (IOException e) {e.printStackTrace();
             }
         }
@@ -119,35 +129,40 @@ class Collaborator extends Thread {
         electionDoneTimeout = rescheduleTask(electionDoneTimeout, new ElectionDoneTimeout(), delay <= 0 ? TIMEOUT_DT2 : delay);
     }
 
+    public void coordenatorTimer(long delay) {
+        coordenatorTimeout = rescheduleTask(coordenatorTimeout, new CoordenatorTimeout(), delay <= 0 ? TIMEOUT_DT1 : delay);
+    }
+
     public void electionTimer(long delay) {
         electionTimeout = rescheduleTask(electionTimeout, new ElectionTimeout(), delay <= 0 ? TIMEOUT_DT1 : delay);
     }
 
+
     public void election() throws IOException {
-        coordenatorEligible.set(true);
-        String output = "Election: {";
-        for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
-            if (entry.getKey() > ID) {
-                output += String.format("[%5d]", entry.getKey());
-                self.send(new Message(ID, true, false, false, ""), entry.getValue());
-            }
-        };
-        System.out.println(output + "}");
-        electionDoneTimer(0);
+        if(!electionRunning.getAndSet(true)){
+            coordenatorEligible.set(true);
+            String output = "Election: {";
+            for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
+                if (entry.getKey() > ID) {
+                    output += String.format("[%5d]", entry.getKey());
+                    self.send(new Message(ID, true, false, false, ""), entry.getValue());
+                }
+            };
+            System.out.println(output + "}");
+            electionDoneTimer(0);
+        }
     }
 
     public void startElection() throws IOException {
         boolean isHighest = checkHighestID();
-        if(!electionRunning.getAndSet(true)){
-            boolean result = asker.ask(isHighest ? "Become coordenator?" : "Start election?");
-            if (!result) {
-                return;
-            }
-            if (isHighest) {
-                startCoordenator();
-            } else {
-                election();
-            }
+        boolean result = asker.ask(isHighest ? "Become coordenator?" : "Start election?");
+        if (!result) {
+            return;
+        }
+        if (isHighest) {
+            startCoordenator();
+        } else {
+            election();
         }
     }
 
@@ -171,7 +186,6 @@ class Collaborator extends Thread {
     public void startCoordenator() {
         if (coordenator != null) {
             return;
-            //coordenator.stopCoordenator();
         }
         System.out.println("Coordenator!");
         coordenator = new Coordenator(ID, group);
@@ -181,7 +195,7 @@ class Collaborator extends Thread {
     public void addPeer(Message message) throws IOException {
         InetSocketAddress destination = new InetSocketAddress(message.sourceAddress.getAddress(), message.sourceID);
         boolean newpeer = pool.putIfAbsent(message.sourceID, destination) == null;
-        if (newpeer && message.sourceID != ID && !message.isCoordenator && !message.isElection && !message.isReply) {
+        if (message.sourceID != ID && !message.isCoordenator && !message.isElection && !message.isReply) {
             self.send(new Message(ID, false, true, false, ""), destination);
         }
     }
@@ -200,7 +214,7 @@ class Collaborator extends Thread {
                         }
                     } else {
                         self.send(new Message(ID, true, true, false, ""), message.sourceAddress);
-                        startElection();
+                        election();
                     }
                 }
             }
@@ -216,6 +230,7 @@ class Collaborator extends Thread {
                 addPeer(message);
                 if (message.sourceID != coordenador_eleito && message.isCoordenator) {
                     coordenatorEligible.set(false);
+                    electionTimeout.cancel();
                     asker.setEnabled(false);
                     stopElection();
                     coordenador_eleito = message.sourceID;
@@ -225,7 +240,7 @@ class Collaborator extends Thread {
                 }
                 if (message.sourceID == coordenador_eleito) {
                     asker.setEnabled(true);
-                    electionTimer(0);
+                    coordenatorTimer(0);
                 }
             }
         } catch (IOException e) { e.printStackTrace();
@@ -330,7 +345,7 @@ class Peer {
 
     public Peer(int listenPort, String multicastAddr, int destPort) throws IOException {
         address = new InetSocketAddress(multicastAddr, destPort);
-        socket = new DatagramSocket(null); //MulticastSocket(6789);
+        socket = new DatagramSocket(null);
         socket.setReuseAddress(true);
         socket.bind(new InetSocketAddress(listenPort));
         socket.joinGroup(address, NetworkInterface.getByName("le0"));
