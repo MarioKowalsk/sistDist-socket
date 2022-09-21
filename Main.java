@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class Main {
     public static void main(String args[]) {
         try {
-            new Collaborator(args[0]);
+            new Collaborator(args[0], Integer.parseInt(args[1]));
         } catch (IOException e) { e.printStackTrace();
         }
     }
@@ -19,11 +19,7 @@ class Asker extends Thread {
     AtomicBoolean enabled = new AtomicBoolean(true);
     AtomicBoolean asking = new AtomicBoolean(false);
     Semaphore mutex = new Semaphore(0);
-    Results result;
-
-    enum Results {
-        BUSY, YES, NO, COORDENATOR
-    }
+    boolean result = false;
 
     public Asker() {
         this.start();
@@ -33,10 +29,7 @@ class Asker extends Thread {
         while (true) {
             Scanner sc = new Scanner(System.in);
             String in = sc.next().toLowerCase();
-            result = in.matches(".*c.*") ? Results.COORDENATOR :
-                     in.matches(".*y.*") ? Results.YES :
-                     in.matches(".*n.*") ? Results.NO  :
-                     Results.BUSY;
+            result = in.matches(".*y.*") ? true : false;
             if (asking.get()) {
                 mutex.release();
             }
@@ -45,16 +38,17 @@ class Asker extends Thread {
 
     public void setEnabled(boolean value) {
         if (!value && asking.get()) {
+            result = true;
             mutex.release();
         }
         enabled.set(value);
     }
 
-    public Asker.Results ask() {
+    public boolean ask(String question) {
         if (!enabled.get()) {
-            return Results.BUSY;
+            return true;
         }
-        System.out.println("Start election or become coordenator? [Yes/no/coordenator/y/n/c]: ");
+        System.out.println(question + " [Y/n/yes/no]");
         if (!asking.getAndSet(true)) {
             try {
                 mutex.acquire();
@@ -62,6 +56,8 @@ class Asker extends Thread {
             }
             mutex.drainPermits();
             asking.set(false);
+        } else {
+            return true;
         }
         return result;
     }
@@ -72,7 +68,7 @@ class Collaborator extends Thread {
     static final int TIMEOUT_DT2 = 6000;
     static final int TIMEOUT_DT3 = 8000;
     Peer group;
-    Peer self = new Peer();
+    Peer self;
     int ID = 0;
     int coordenador_eleito = 0;
     ConcurrentHashMap<Integer, InetSocketAddress> pool = new ConcurrentHashMap<>();
@@ -85,8 +81,9 @@ class Collaborator extends Thread {
 
     Asker asker = new Asker();
 
-    public Collaborator(String groupAddress) throws IOException {
+    public Collaborator(String groupAddress, int port) throws IOException {
         group = new Peer(6789, groupAddress, 6789);
+        self = new Peer(port);
         ID = self.getPort();
         String prefix = String.format("ID: %5d", ID);
         self.printPrefix = prefix;
@@ -140,15 +137,17 @@ class Collaborator extends Thread {
     }
 
     public void startElection() throws IOException {
-        Asker.Results result = asker.ask();
-        if (result == Asker.Results.NO) {
-            return;
-        } else if (result == Asker.Results.COORDENATOR) {
-            startCoordenator();
-            return;
-        }
-        if (!electionRunning.getAndSet(true)) {
-            election();
+        boolean isHighest = checkHighestID();
+        if(!electionRunning.getAndSet(true)){
+            boolean result = asker.ask(isHighest ? "Become coordenator?" : "Start election?");
+            if (!result) {
+                return;
+            }
+            if (isHighest) {
+                startCoordenator();
+            } else {
+                election();
+            }
         }
     }
 
@@ -160,11 +159,21 @@ class Collaborator extends Thread {
         }
     }
 
+    public boolean checkHighestID() {
+        for (Map.Entry<Integer, InetSocketAddress> entry : pool.entrySet()) {
+            if (entry.getKey() > ID) {
+                return false;
+            }
+        };
+        return true;
+    }
+
     public void startCoordenator() {
-        System.out.println("Coordenator!");
         if (coordenator != null) {
-            coordenator.stopCoordenator();
+            return;
+            //coordenator.stopCoordenator();
         }
+        System.out.println("Coordenator!");
         coordenator = new Coordenator(ID, group);
         coordenator.start();
     }
@@ -237,7 +246,7 @@ class Coordenator extends Thread {
 
     public void run() {
         try {
-            group.send(new Message(ID, false, false, true, ""));
+            group.send(new Message(ID, false, false, true, String.valueOf(ID)));
             while (running) {
                 group.send(new Message(ID, false, false, true, "Olá"));
                 sleep(TIMEOUT_DT1);

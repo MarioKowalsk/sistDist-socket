@@ -29,28 +29,28 @@
 		{
 			"label": "Process 1",
 			"type": "shell",
-			"command": "make run",
+			"command": "cd out && java Main 228.5.6.7 8080",
 			"group": "test",
 			"isBackground": true
 		},
 		{
 			"label": "Process 2",
 			"type": "shell",
-			"command": "make run",
+			"command": "cd out && java Main 228.5.6.7 8081",
 			"group": "test",
 			"isBackground": true
 		},
 		{
 			"label": "Process 3",
 			"type": "shell",
-			"command": "make run",
+			"command": "cd out && java Main 228.5.6.7 8082",
 			"group": "test",
 			"isBackground": true
 		},
 		{
 			"label": "Process 4",
 			"type": "shell",
-			"command": "make run",
+			"command": "cd out && java Main 228.5.6.7 8083",
 			"group": "test",
 			"isBackground": true
 		}
